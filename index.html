@@ -404,6 +404,8 @@
       </div>
 
       <div class="section" id="section-today"></div>
+      <div class="section" id="section-objectifs"></div>
+      <div class="section" id="section-drafts"></div>
 
       <footer>fait par ton compagnon · <span>ICON ARCHIVES</span> × routine quotidienne</footer>
     </div>
@@ -429,63 +431,27 @@
     </div>
   </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (function(){
-  const STORAGE_KEY = 'dailyOpsData_v2';
+  const SUPABASE_URL = 'https://dntlqqqlpucuoxecklxc.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_Q8el0B-0f_lMZ5yqTjMzNg_tBExVv8V';
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
   const todayKey = () => {
     const d = new Date();
     return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
   };
-
-  const defaultTemplate = [
-    { text: "checker le topo du matin (PC / mails / messages)" },
-    { text: "répondre aux messages prioritaires (Alibaba / Viktor)" },
-    { text: "aller à la salle" },
-    { text: "avancer sur une vidéo / contenu" },
-    { text: "avancer un truc concret sur ICON ARCHIVES" },
-  ];
+  const tk = todayKey();
 
   function uid(){ return Math.random().toString(36).slice(2,10); }
-  function load(){
-    try{ const raw = localStorage.getItem(STORAGE_KEY); if(raw) return JSON.parse(raw); }catch(e){}
-    return null;
-  }
-  function save(data){ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
 
-  function freshDay(template){
-    return {
-      tasks: template.map(t => ({ id: uid(), text: t.text, done:false, recurring:true, proof:null })),
-      completedAt100: false,
-      firstCheckAt: null
-    };
-  }
-
-  let data = load();
-  if(!data){
-    data = { template: JSON.parse(JSON.stringify(defaultTemplate)), days: {}, streak: 0 };
-  }
-  if(!data.template) data.template = JSON.parse(JSON.stringify(defaultTemplate));
-  if(typeof data.streak !== 'number') data.streak = 0;
-  if(!data.days) data.days = {};
-
-  // one-time migration: make sure gym & vidéo missions exist (Lucas wants these ~daily)
-  ['salle', 'vidéo'].forEach((kw, i) => {
-    const has = data.template.some(t => t.text.toLowerCase().includes(kw));
-    if(!has) data.template.push(defaultTemplate[i === 0 ? 2 : 3]);
-  });
-
-  const tk = todayKey();
-  if(!data.days[tk]) data.days[tk] = freshDay(data.template);
-  const day = data.days[tk];
-
-  // also backfill today's list if it predates the migration and is missing them
-  ['salle', 'vidéo'].forEach((kw, i) => {
-    const has = day.tasks.some(t => t.text.toLowerCase().includes(kw));
-    if(!has){
-      const tpl = defaultTemplate[i === 0 ? 2 : 3];
-      day.tasks.push({ id: uid(), text: tpl.text, done:false, recurring:true, proof:null, _fresh:true });
-    }
-  });
+  // local mirror of the shared Supabase state (synced across devices)
+  let tasks = [];        // sous_objectifs — today
+  let objectifs = [];    // objectifs_finaux — actifs
+  let drafts = [];       // drafts_a_valider — en_attente
+  let streak = 0;
+  let completedAt100 = false;
 
   document.getElementById('dateLabel').textContent =
     new Date().toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long' });
@@ -517,7 +483,7 @@
 
   function openVerify(task){
     pendingTask = task;
-    modalTaskName.textContent = task.text;
+    modalTaskName.textContent = task.titre;
     agentStatus.textContent = 'agent de vérification — scan en cours…';
     modalActions.style.visibility = 'hidden';
     modalBg.classList.add('open');
@@ -534,11 +500,11 @@
   }
   modalNo.onclick = closeVerify;
   modalBg.onclick = (e) => { if(e.target === modalBg) closeVerify(); };
-  modalYes.onclick = () => {
+  modalYes.onclick = async () => {
     if(!pendingTask) return;
-    pendingTask.done = true;
+    const t = pendingTask;
     closeVerify();
-    afterChange();
+    await markDone(t, true);
     burstConfetti();
   };
 
@@ -578,8 +544,63 @@
     });
   }
 
-  // ---------- render tasks ----------
-  function render(){
+  // ---------- remote ops (write-through, optimistic UI) ----------
+  async function markDone(task, done){
+    task.statut = done ? 'fait' : 'a_faire';
+    task.completed_at = done ? new Date().toISOString() : null;
+    render();
+    await sb.from('sous_objectifs').update({ statut: task.statut, completed_at: task.completed_at }).eq('id', task.id);
+    await checkStreak();
+  }
+
+  async function deleteTask(task){
+    tasks = tasks.filter(t => t.id !== task.id);
+    render();
+    await sb.from('sous_objectifs').delete().eq('id', task.id);
+  }
+
+  async function addTask(titre, recurring){
+    const optimistic = { id: uid(), titre, statut:'a_faire', date_prevue: tk, recurrent: !!recurring, source:'manuel', completed_at: null, _fresh:true };
+    tasks.push(optimistic);
+    render();
+    const { data, error } = await sb.from('sous_objectifs')
+      .insert({ titre, date_prevue: tk, statut:'a_faire', recurrent: !!recurring, source:'manuel' })
+      .select().single();
+    if(!error && data){ optimistic.id = data.id; }
+    if(recurring){
+      // standing template (date_prevue = null) so it gets re-seeded every day
+      await sb.from('sous_objectifs').insert({ titre, date_prevue: null, statut:'a_faire', recurrent:true, source:'manuel' });
+    }
+  }
+
+  async function checkStreak(){
+    const total = tasks.length;
+    const done = tasks.filter(t => t.statut === 'fait').length;
+    const pct = total === 0 ? 0 : Math.round((done/total)*100);
+    let changed = false;
+    if(pct === 100 && total > 0 && !completedAt100){
+      completedAt100 = true; streak++; burstConfetti(); changed = true;
+    } else if(pct < 100 && completedAt100){
+      completedAt100 = false; streak = Math.max(0, streak - 1); changed = true;
+    }
+    if(changed){
+      document.getElementById('streakNum').textContent = streak;
+      await sb.from('journal_quotidien').upsert({
+        date: tk, streak, data: { completedAt100 }, updated_at: new Date().toISOString()
+      }, { onConflict: 'date' });
+    }
+  }
+
+  async function decideDraft(draft, decision, newContent){
+    drafts = drafts.filter(d => d.id !== draft.id);
+    render();
+    const payload = { statut: decision, decided_at: new Date().toISOString() };
+    if(newContent !== undefined) payload.contenu = newContent;
+    await sb.from('drafts_a_valider').update(payload).eq('id', draft.id);
+  }
+
+  // ---------- render: objectifs du jour ----------
+  function renderTasks(){
     const mount = document.getElementById('section-today');
     mount.innerHTML = '';
 
@@ -592,40 +613,35 @@
     list.className = 'tasklist';
     let total = 0, done = 0;
 
-    if(day.tasks.length === 0){
+    if(tasks.length === 0){
       const empty = document.createElement('div');
       empty.className = 'empty';
       empty.textContent = "rien pour l'instant — balance un objectif ci-dessous 👇";
       list.appendChild(empty);
     }
 
-    day.tasks.forEach(task => {
+    tasks.forEach(task => {
       total++;
-      if(task.done) done++;
+      if(task.statut === 'fait') done++;
 
       const li = document.createElement('li');
-      li.className = 'task' + (task.done ? ' done' : '');
+      li.className = 'task' + (task.statut === 'fait' ? ' done' : '');
       if(task._fresh){ li.classList.add('fresh'); delete task._fresh; }
 
       const check = document.createElement('div');
-      check.className = 'check' + (task.done ? ' checked' : '');
+      check.className = 'check' + (task.statut === 'fait' ? ' checked' : '');
       check.onclick = () => {
-        if(task.done){
-          task.done = false;
-          task.proof = null;
-          afterChange();
-        } else {
-          openVerify(task);
-        }
+        if(task.statut === 'fait'){ markDone(task, false); }
+        else { openVerify(task); }
       };
 
       const labelWrap = document.createElement('div');
       labelWrap.style.flex = '1';
       const label = document.createElement('div');
       label.className = 'label';
-      label.textContent = task.text;
+      label.textContent = task.titre;
       labelWrap.appendChild(label);
-      if(task.done){
+      if(task.statut === 'fait'){
         const proofTag = document.createElement('div');
         proofTag.className = 'proof-tag';
         proofTag.textContent = '✓ confirmé par l’agent de vérif';
@@ -636,11 +652,7 @@
       del.className = 'del';
       del.textContent = '✕';
       del.title = 'supprimer pour aujourd\'hui';
-      del.onclick = (e) => {
-        e.stopPropagation();
-        day.tasks = day.tasks.filter(t => t.id !== task.id);
-        afterChange();
-      };
+      del.onclick = (e) => { e.stopPropagation(); deleteTask(task); };
 
       li.appendChild(check);
       li.appendChild(labelWrap);
@@ -665,18 +677,16 @@
     recurringWrap.appendChild(recurringCheckbox);
     recurringWrap.appendChild(document.createTextNode('en faire une tâche récurrente (revient chaque jour)'));
 
-    function addTask(){
+    function submitTask(){
       const val = input.value.trim();
       if(!val) return;
       const isRecurring = recurringCheckbox.checked;
-      day.tasks.push({ id: uid(), text: val, done:false, recurring:isRecurring, proof:null, _fresh:true });
-      if(isRecurring) data.template.push({ text: val });
+      addTask(val, isRecurring);
       input.value = '';
       recurringCheckbox.checked = false;
-      afterChange();
     }
-    btn.onclick = addTask;
-    input.onkeydown = (e) => { if(e.key === 'Enter') addTask(); };
+    btn.onclick = submitTask;
+    input.onkeydown = (e) => { if(e.key === 'Enter') submitTask(); };
     addRow.appendChild(input);
     addRow.appendChild(btn);
     mount.appendChild(addRow);
@@ -693,24 +703,162 @@
     document.getElementById('ringLabel').textContent = pct + '%';
     const circumference = 188.5;
     document.getElementById('ringFg').style.strokeDashoffset = circumference - (pct/100)*circumference;
+    document.getElementById('streakNum').textContent = streak;
+  }
 
-    if(pct === 100 && total > 0 && !day.completedAt100){
-      day.completedAt100 = true;
-      data.streak++;
-      burstConfetti();
-    }
-    if(pct < 100 && day.completedAt100){
-      day.completedAt100 = false;
-      data.streak = Math.max(0, data.streak - 1);
-    }
-    document.getElementById('streakNum').textContent = data.streak;
+  // ---------- render: objectifs finaux (long terme) ----------
+  function renderObjectifs(){
+    const mount = document.getElementById('section-objectifs');
+    mount.innerHTML = '';
+    if(objectifs.length === 0) return;
 
+    const titleEl = document.createElement('div');
+    titleEl.className = 'section-title';
+    titleEl.innerHTML = '<span class="dot"></span> Objectifs finaux';
+    mount.appendChild(titleEl);
+
+    const list = document.createElement('ul');
+    list.className = 'tasklist';
+    objectifs.forEach(o => {
+      const li = document.createElement('li');
+      li.className = 'task';
+      const wrap = document.createElement('div');
+      wrap.style.flex = '1';
+      const label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = o.titre;
+      wrap.appendChild(label);
+      const meta = document.createElement('div');
+      meta.className = 'proof-tag';
+      const dl = o.deadline ? `deadline : ${new Date(o.deadline).toLocaleDateString('fr-FR')}` : 'pas de deadline fixée';
+      meta.textContent = dl + (o.description ? ` — ${o.description}` : '');
+      wrap.appendChild(meta);
+      li.appendChild(wrap);
+      list.appendChild(li);
+    });
+    mount.appendChild(list);
+  }
+
+  // ---------- render: drafts à valider (boucle de validation interactive) ----------
+  function renderDrafts(){
+    const mount = document.getElementById('section-drafts');
+    mount.innerHTML = '';
+    if(drafts.length === 0) return;
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'section-title';
+    titleEl.innerHTML = '<span class="dot"></span> À valider';
+    mount.appendChild(titleEl);
+
+    const list = document.createElement('ul');
+    list.className = 'tasklist';
+
+    drafts.forEach(d => {
+      const card = document.createElement('li');
+      card.className = 'task';
+      card.style.flexDirection = 'column';
+      card.style.alignItems = 'stretch';
+      card.style.gap = '10px';
+
+      const icon = d.type === 'message' ? '💬' : d.type === 'email' ? '✉️' : d.type === 'reponse' ? '↩️' : '📝';
+      const head = document.createElement('div');
+      head.className = 'label';
+      head.textContent = `${icon} ${d.destinataire || 'brouillon'}`;
+      card.appendChild(head);
+
+      if(d.contexte){
+        const ctx = document.createElement('div');
+        ctx.className = 'proof-tag';
+        ctx.textContent = d.contexte;
+        card.appendChild(ctx);
+      }
+
+      const ta = document.createElement('textarea');
+      ta.value = d.contenu;
+      Object.assign(ta.style, {
+        width:'100%', minHeight:'72px', background:'var(--panel2)', border:'1px solid var(--line)',
+        borderRadius:'10px', color:'var(--text)', padding:'10px 12px', fontSize:'13px',
+        fontFamily:'inherit', resize:'vertical', outline:'none'
+      });
+      card.appendChild(ta);
+
+      const actions = document.createElement('div');
+      Object.assign(actions.style, { display:'flex', gap:'8px', justifyContent:'flex-end' });
+
+      const reject = document.createElement('button');
+      reject.textContent = 'rejeter';
+      Object.assign(reject.style, {
+        background:'var(--line)', color:'var(--muted)', border:'none', borderRadius:'10px',
+        padding:'9px 16px', fontSize:'12.5px', fontWeight:'600', cursor:'pointer'
+      });
+      reject.onclick = () => decideDraft(d, 'rejete');
+
+      const approve = document.createElement('button');
+      approve.textContent = '✓ valider';
+      Object.assign(approve.style, {
+        background:'linear-gradient(135deg, var(--p1), var(--p2))', color:'white', border:'none',
+        borderRadius:'10px', padding:'9px 18px', fontSize:'12.5px', fontWeight:'700', cursor:'pointer',
+        boxShadow:'0 6px 20px rgba(212,175,106,.3)'
+      });
+      approve.onclick = () => {
+        const edited = ta.value.trim();
+        decideDraft(d, edited === d.contenu.trim() ? 'valide' : 'modifie', edited);
+      };
+
+      actions.appendChild(reject);
+      actions.appendChild(approve);
+      card.appendChild(actions);
+      list.appendChild(card);
+    });
+    mount.appendChild(list);
+  }
+
+  function render(){
+    renderTasks();
+    renderObjectifs();
+    renderDrafts();
     renderPlanning();
   }
 
-  function afterChange(){ save(data); render(); }
+  // ---------- initial load from Supabase + recurring-task seeding ----------
+  async function init(){
+    try{
+      let { data: rows } = await sb.from('sous_objectifs').select('*').eq('date_prevue', tk).order('created_at', { ascending: true });
+      tasks = rows || [];
 
-  render();
+      if(tasks.length === 0){
+        const { data: templates } = await sb.from('sous_objectifs').select('*').eq('recurrent', true).is('date_prevue', null);
+        if(templates && templates.length){
+          const seeds = templates.map(t => ({
+            titre: t.titre, date_prevue: tk, statut: 'a_faire', recurrent: true,
+            source: t.source || 'manuel', objectif_id: t.objectif_id || null
+          }));
+          const { data: inserted } = await sb.from('sous_objectifs').insert(seeds).select();
+          tasks = (inserted || []).map(t => ({ ...t, _fresh:true }));
+        }
+      }
+
+      const { data: of } = await sb.from('objectifs_finaux').select('*').eq('statut','actif').order('deadline', { ascending: true });
+      objectifs = of || [];
+
+      const { data: dr } = await sb.from('drafts_a_valider').select('*').eq('statut','en_attente').order('created_at', { ascending: true });
+      drafts = dr || [];
+
+      const { data: jrows } = await sb.from('journal_quotidien').select('*').order('date', { ascending: false }).limit(10);
+      const todayRow = (jrows || []).find(r => r.date === tk);
+      streak = todayRow ? todayRow.streak : ((jrows && jrows[0]) ? jrows[0].streak : 0);
+      completedAt100 = !!(todayRow && todayRow.data && todayRow.data.completedAt100);
+
+      render();
+      await checkStreak();
+    }catch(err){
+      console.error('init error', err);
+      document.getElementById('section-today').innerHTML =
+        '<div class="empty">connexion à la base impossible — réessaie dans un instant 🔌</div>';
+    }
+  }
+
+  init();
 })();
 </script>
 </body>
