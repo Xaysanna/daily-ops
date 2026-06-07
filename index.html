@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DAILY OPS — presence over noise</title>
+<style>
+  :root{
+    --bg: #0a0a0a;
+    --panel: #141414;
+    --panel2: #1c1c1c;
+    --line: #2b2b2b;
+    --text: #f5f5f3;
+    --muted: #8f8f8a;
+    --p1: #d4af6a;   /* signature gold */
+    --p2: #ece6d8;   /* warm off-white */
+    --p3: #b8b8b2;   /* silver */
+    --gold: #d4af6a;
+  }
+  *{ box-sizing: border-box; }
+  body{
+    margin:0;
+    background:
+      radial-gradient(circle at 15% 0%, rgba(212,175,106,.14), transparent 40%),
+      radial-gradient(circle at 100% 30%, rgba(236,230,216,.06), transparent 45%),
+      radial-gradient(circle at 30% 100%, rgba(184,184,178,.06), transparent 40%),
+      var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    display:flex;
+    justify-content:center;
+    padding: 36px 16px 90px;
+  }
+  .layout{
+    width:100%;
+    max-width: 1040px;
+    display:grid;
+    grid-template-columns: 1fr 300px;
+    gap: 26px;
+    align-items: start;
+  }
+  @media (max-width: 880px){
+    .layout{ grid-template-columns: 1fr; }
+  }
+
+  .wrap{ width: 100%; }
+
+  header{ text-align:center; margin-bottom: 24px; }
+  .signature{
+    font-family: 'Brush Script MT', cursive;
+    font-size: 42px;
+    letter-spacing: 1px;
+    margin: 0;
+    background: linear-gradient(90deg, var(--p1), var(--p2), var(--p3));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 0 18px rgba(212,175,106,.35));
+  }
+  .tagline{
+    text-transform: uppercase;
+    letter-spacing: 4px;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .date{
+    margin-top: 12px;
+    font-size: 14px;
+    color: var(--muted);
+    text-transform: capitalize;
+  }
+
+  .progress-card{
+    background: linear-gradient(135deg, var(--panel), var(--panel2));
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 20px 22px;
+    margin-bottom: 24px;
+    display:flex;
+    align-items:center;
+    gap: 18px;
+    box-shadow: 0 10px 40px rgba(212,175,106,.12);
+  }
+  .ring{ position: relative; width: 72px; height:72px; flex-shrink:0; }
+  .ring svg{ transform: rotate(-90deg); }
+  .ring-bg{ stroke: var(--line); fill:none; stroke-width:7; }
+  .ring-fg{
+    fill:none; stroke-width:7; stroke-linecap:round;
+    stroke: url(#ringGrad);
+    transition: stroke-dashoffset .5s cubic-bezier(.2,.9,.3,1.2);
+  }
+  .ring-label{
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:15px; font-weight:700;
+  }
+  .progress-text .big{ font-size: 17px; font-weight:700; }
+  .progress-text .small{ font-size: 12px; color: var(--muted); margin-top:3px; }
+  .streak{
+    margin-left:auto;
+    text-align:right;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .streak b{
+    font-size: 26px; display:block;
+    background: linear-gradient(90deg, var(--gold), var(--p1));
+    -webkit-background-clip: text; background-clip:text; color:transparent;
+  }
+  .streak .flame{ font-size: 16px; }
+
+  .section-title{
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: var(--muted);
+    margin: 0 0 12px 4px;
+    display:flex; align-items:center; gap:8px;
+  }
+  .section-title .dot{
+    width:8px; height:8px; border-radius:50%;
+    background: linear-gradient(135deg, var(--p1), var(--p2));
+    box-shadow: 0 0 10px var(--p2);
+  }
+
+  ul.tasklist{ list-style:none; margin:0; padding:0; }
+  li.task{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    display:flex;
+    align-items:center;
+    gap: 14px;
+    transition: border-color .2s, opacity .25s, transform .15s;
+    position: relative;
+    overflow: hidden;
+  }
+  li.task::before{
+    content:"";
+    position:absolute; left:0; top:0; bottom:0; width:3px;
+    background: linear-gradient(180deg, var(--p1), var(--p2), var(--p3));
+    opacity:0; transition: opacity .2s;
+  }
+  li.task:hover{ border-color:#46443a; transform: translateX(2px); }
+  li.task:hover::before{ opacity: 1; }
+  li.task.done{ opacity: .4; }
+  li.task.done .label{ text-decoration: line-through; }
+  li.task.fresh{ animation: popin .35s ease; }
+  @keyframes popin{
+    0%{ transform: scale(.92); opacity:0; }
+    100%{ transform: scale(1); opacity:1; }
+  }
+
+  .check{
+    width: 26px; height:26px;
+    border-radius: 8px;
+    border: 2px solid var(--muted);
+    flex-shrink:0;
+    cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition: all .2s;
+    background: transparent;
+    font-size: 14px;
+    font-weight: 800;
+  }
+  .check:hover{ border-color: var(--p3); box-shadow: 0 0 14px rgba(184,184,178,.4); }
+  .check.checked{
+    background: linear-gradient(135deg, var(--p1), var(--p2));
+    border-color: transparent;
+    color: white;
+    box-shadow: 0 0 16px rgba(236,230,216,.55);
+  }
+  .check.checked::after{ content:"✓"; }
+
+  .label{ flex:1; font-size: 14.5px; line-height:1.4; }
+  .proof-tag{
+    font-size: 11px;
+    color: var(--p3);
+    margin-top: 4px;
+    font-style: italic;
+    opacity: .85;
+  }
+  .del{
+    background:none; border:none; color: var(--muted);
+    cursor:pointer; font-size: 16px; opacity:0;
+    transition: opacity .15s;
+    padding: 4px;
+  }
+  li.task:hover .del{ opacity: .6; }
+  .del:hover{ color: var(--p1) !important; opacity:1 !important; }
+
+  .empty{
+    color: var(--muted);
+    font-size: 13px;
+    padding: 16px 6px;
+    font-style: italic;
+    text-align: center;
+    border: 1px dashed var(--line);
+    border-radius: 14px;
+  }
+
+  .add-row{ display:flex; gap:8px; margin-top: 10px; }
+  .add-row input{
+    flex:1;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    color: var(--text);
+    padding: 12px 16px;
+    font-size: 14px;
+    outline:none;
+  }
+  .add-row input:focus{ border-color: var(--p2); box-shadow: 0 0 0 3px rgba(212,175,106,.2); }
+  .add-row button{
+    background: linear-gradient(135deg, var(--p1), var(--p2));
+    color: white;
+    border:none;
+    border-radius: 12px;
+    padding: 0 22px;
+    font-weight: 700;
+    cursor:pointer;
+    font-size: 16px;
+    transition: transform .12s, box-shadow .2s;
+    box-shadow: 0 6px 20px rgba(212,175,106,.35);
+  }
+  .add-row button:hover{ transform: translateY(-1px); box-shadow: 0 8px 26px rgba(236,230,216,.4); }
+
+  .recurring-toggle{
+    display:flex; align-items:center; gap:7px;
+    margin-top: 9px;
+    font-size: 12px;
+    color: var(--muted);
+    user-select:none;
+    cursor:pointer;
+  }
+  .recurring-toggle input{ accent-color: var(--p2); cursor:pointer; }
+
+  /* SIDE PLANNING */
+  .side{
+    background: linear-gradient(160deg, var(--panel), var(--panel2));
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 20px;
+    box-shadow: 0 10px 40px rgba(184,184,178,.08);
+  }
+  .side h3{
+    margin: 0 0 4px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: var(--muted);
+  }
+  .side .anchor{
+    font-size: 12px; color: var(--p3);
+    margin-bottom: 16px;
+  }
+  .timeline{ position: relative; padding-left: 22px; }
+  .timeline::before{
+    content:"";
+    position:absolute; left: 7px; top:6px; bottom: 6px; width: 2px;
+    background: linear-gradient(180deg, var(--p1), var(--p2), var(--p3));
+    opacity:.4;
+  }
+  .tl-item{ position: relative; margin-bottom: 18px; }
+  .tl-item::before{
+    content:"";
+    position:absolute; left: -22px; top: 3px;
+    width: 12px; height:12px; border-radius:50%;
+    background: var(--panel);
+    border: 2px solid var(--p2);
+  }
+  .tl-time{ font-size: 11px; color: var(--muted); letter-spacing: 1px; }
+  .tl-label{ font-size: 13.5px; margin-top: 2px; }
+  .side .hint{
+    font-size: 11px; color: var(--muted);
+    margin-top: 6px; line-height: 1.5;
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+  }
+
+  /* MODAL */
+  .modal-bg{
+    position: fixed; inset:0; background: rgba(8,7,18,.72);
+    display:none; align-items:center; justify-content:center;
+    backdrop-filter: blur(3px);
+    z-index: 50;
+  }
+  .modal-bg.open{ display:flex; }
+  .modal{
+    background: linear-gradient(160deg, var(--panel2), var(--panel));
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 26px;
+    width: min(420px, 90vw);
+    box-shadow: 0 20px 80px rgba(212,175,106,.35);
+    animation: popin .25s ease;
+  }
+  .modal h4{
+    margin:0 0 6px; font-size: 16px;
+    background: linear-gradient(90deg, var(--p1), var(--p3));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .modal p{ margin: 0 0 14px; font-size: 13px; color: var(--muted); line-height:1.5; }
+  .modal .task-name{ color: var(--text); font-weight:600; }
+  .modal textarea{
+    width:100%; min-height: 70px;
+    background: var(--panel);
+    border:1px solid var(--line);
+    border-radius: 12px;
+    color: var(--text);
+    padding: 12px 14px;
+    font-size: 13.5px;
+    font-family: inherit;
+    outline:none;
+    resize: vertical;
+  }
+  .modal textarea:focus{ border-color: var(--p2); }
+  .modal-actions{ display:flex; gap:10px; margin-top: 14px; justify-content:flex-end; }
+  .modal-actions button{
+    border:none; border-radius: 10px;
+    padding: 10px 18px; font-size:13px; font-weight:600;
+    cursor:pointer; transition: transform .12s, opacity .15s;
+  }
+  .btn-cancel{ background: var(--line); color: var(--muted); }
+  .btn-confirm{
+    background: linear-gradient(135deg, var(--p1), var(--p2));
+    color:white;
+    box-shadow: 0 6px 20px rgba(212,175,106,.35);
+  }
+  .modal-actions button:hover{ transform: translateY(-1px); }
+  .modal .agent-line{
+    font-size:11.5px; color: var(--p3); margin-bottom: 10px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .scan-dot{
+    width:8px; height:8px; border-radius:50%;
+    background: var(--p3); box-shadow: 0 0 10px var(--p3);
+    animation: pulse 1s infinite ease-in-out;
+  }
+  @keyframes pulse{ 0%,100%{ opacity:.4; transform:scale(.8);} 50%{ opacity:1; transform:scale(1.15);} }
+
+  footer{
+    text-align:center; margin-top: 30px;
+    color: var(--muted); font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+  }
+  footer span{
+    background: linear-gradient(90deg, var(--p1), var(--p3));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    font-weight:700;
+  }
+
+  /* confetti */
+  .confetti{
+    position: fixed; top:0; left:0; width:8px; height:14px;
+    pointer-events:none; z-index: 99; border-radius: 2px;
+    animation: fall linear forwards;
+  }
+  @keyframes fall{
+    to{ transform: translateY(110vh) rotate(720deg); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+  <svg width="0" height="0">
+    <defs>
+      <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#d4af6a"/>
+        <stop offset="50%" stop-color="#ece6d8"/>
+        <stop offset="100%" stop-color="#b8b8b2"/>
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <div class="layout">
+    <div class="wrap">
+      <header>
+        <p class="signature">Icon Archives</p>
+        <p class="tagline">presence over noise — daily ops</p>
+        <p class="date" id="dateLabel"></p>
+      </header>
+
+      <div class="progress-card">
+        <div class="ring">
+          <svg width="72" height="72" viewBox="0 0 72 72">
+            <circle class="ring-bg" cx="36" cy="36" r="30"></circle>
+            <circle class="ring-fg" id="ringFg" cx="36" cy="36" r="30" stroke-dasharray="188.5" stroke-dashoffset="188.5"></circle>
+          </svg>
+          <div class="ring-label" id="ringLabel">0%</div>
+        </div>
+        <div class="progress-text">
+          <div class="big" id="progressBig">0 / 0 fait aujourd'hui</div>
+          <div class="small" id="progressSmall">go go go</div>
+        </div>
+        <div class="streak">
+          <span class="flame">🔥</span> série
+          <b id="streakNum">0</b>
+        </div>
+      </div>
+
+      <div class="section" id="section-today"></div>
+
+      <footer>fait par ton compagnon · <span>ICON ARCHIVES</span> × routine quotidienne</footer>
+    </div>
+
+    <aside class="side">
+      <h3>Planning du jour</h3>
+      <div class="anchor" id="anchorLine">en attente de ton premier check…</div>
+      <div class="timeline" id="timeline"></div>
+      <div class="hint">généré direct dès que t'ouvres la page — ça se cale sur l'heure à laquelle tu lances ta journée.</div>
+    </aside>
+  </div>
+
+  <!-- verification modal -->
+  <div class="modal-bg" id="modalBg">
+    <div class="modal">
+      <div class="agent-line"><span class="scan-dot"></span> <span id="agentStatus">agent de vérification — scan en cours…</span></div>
+      <h4>Check rapide</h4>
+      <p>Tu coches : <span class="task-name" id="modalTaskName"></span><br>T'as vraiment fait ça, pour de vrai ?</p>
+      <div class="modal-actions" id="modalActions" style="visibility:hidden;">
+        <button class="btn-cancel" id="modalNo">pas encore en fait</button>
+        <button class="btn-confirm" id="modalYes">✓ ouais, direct</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const STORAGE_KEY = 'dailyOpsData_v2';
+  const todayKey = () => {
+    const d = new Date();
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  };
+
+  const defaultTemplate = [
+    { text: "checker le topo du matin (PC / mails / messages)" },
+    { text: "répondre aux messages prioritaires (Alibaba / Viktor)" },
+    { text: "aller à la salle" },
+    { text: "avancer sur une vidéo / contenu" },
+    { text: "avancer un truc concret sur ICON ARCHIVES" },
+  ];
+
+  function uid(){ return Math.random().toString(36).slice(2,10); }
+  function load(){
+    try{ const raw = localStorage.getItem(STORAGE_KEY); if(raw) return JSON.parse(raw); }catch(e){}
+    return null;
+  }
+  function save(data){ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
+
+  function freshDay(template){
+    return {
+      tasks: template.map(t => ({ id: uid(), text: t.text, done:false, recurring:true, proof:null })),
+      completedAt100: false,
+      firstCheckAt: null
+    };
+  }
+
+  let data = load();
+  if(!data){
+    data = { template: JSON.parse(JSON.stringify(defaultTemplate)), days: {}, streak: 0 };
+  }
+  if(!data.template) data.template = JSON.parse(JSON.stringify(defaultTemplate));
+  if(typeof data.streak !== 'number') data.streak = 0;
+  if(!data.days) data.days = {};
+
+  // one-time migration: make sure gym & vidéo missions exist (Lucas wants these ~daily)
+  ['salle', 'vidéo'].forEach((kw, i) => {
+    const has = data.template.some(t => t.text.toLowerCase().includes(kw));
+    if(!has) data.template.push(defaultTemplate[i === 0 ? 2 : 3]);
+  });
+
+  const tk = todayKey();
+  if(!data.days[tk]) data.days[tk] = freshDay(data.template);
+  const day = data.days[tk];
+
+  // also backfill today's list if it predates the migration and is missing them
+  ['salle', 'vidéo'].forEach((kw, i) => {
+    const has = day.tasks.some(t => t.text.toLowerCase().includes(kw));
+    if(!has){
+      const tpl = defaultTemplate[i === 0 ? 2 : 3];
+      day.tasks.push({ id: uid(), text: tpl.text, done:false, recurring:true, proof:null, _fresh:true });
+    }
+  });
+
+  document.getElementById('dateLabel').textContent =
+    new Date().toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long' });
+
+  // ---------- confetti ----------
+  function burstConfetti(){
+    const colors = ['#d4af6a','#ece6d8','#b8b8b2','#f5f5f3'];
+    for(let i=0;i<28;i++){
+      const el = document.createElement('div');
+      el.className = 'confetti';
+      el.style.left = Math.random()*100 + 'vw';
+      el.style.background = colors[i % colors.length];
+      el.style.animationDuration = (1.6 + Math.random()*1.2) + 's';
+      el.style.opacity = (0.7 + Math.random()*0.3).toString();
+      document.body.appendChild(el);
+      setTimeout(()=> el.remove(), 3000);
+    }
+  }
+
+  // ---------- verification modal (no typing — quick scan + honest yes/no) ----------
+  const modalBg = document.getElementById('modalBg');
+  const modalTaskName = document.getElementById('modalTaskName');
+  const modalActions = document.getElementById('modalActions');
+  const agentStatus = document.getElementById('agentStatus');
+  const modalYes = document.getElementById('modalYes');
+  const modalNo = document.getElementById('modalNo');
+  let pendingTask = null;
+  let scanTimer = null;
+
+  function openVerify(task){
+    pendingTask = task;
+    modalTaskName.textContent = task.text;
+    agentStatus.textContent = 'agent de vérification — scan en cours…';
+    modalActions.style.visibility = 'hidden';
+    modalBg.classList.add('open');
+    clearTimeout(scanTimer);
+    scanTimer = setTimeout(() => {
+      agentStatus.textContent = 'scan terminé — confirme et c’est bon';
+      modalActions.style.visibility = 'visible';
+    }, 1100);
+  }
+  function closeVerify(){
+    clearTimeout(scanTimer);
+    modalBg.classList.remove('open');
+    pendingTask = null;
+  }
+  modalNo.onclick = closeVerify;
+  modalBg.onclick = (e) => { if(e.target === modalBg) closeVerify(); };
+  modalYes.onclick = () => {
+    if(!pendingTask) return;
+    pendingTask.done = true;
+    closeVerify();
+    afterChange();
+    burstConfetti();
+  };
+
+  // ---------- planning generation (anchored on the moment you open the app) ----------
+  const openedAt = Date.now();
+
+  function fmtTime(ts){
+    const d = new Date(ts);
+    return d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
+  }
+  function addMin(ts, mins){ return ts + mins*60000; }
+
+  // offsets in minutes from "maintenant" (heure d'ouverture du site) — gym & vidéos quasi quotidiens, comme demandé
+  const planBlocks = [
+    { offset: 0,   icon:'✅', label: "Maintenant — lancement / check" },
+    { offset: 60,  icon:'📩', label: "Messages & priorités à traiter" },
+    { offset: 180, icon:'🎯', label: "Bloc focus — taff / cours" },
+    { offset: 300, icon:'🏋️', label: "Salle de sport" },
+    { offset: 420, icon:'🍽️', label: "Pause / repas" },
+    { offset: 540, icon:'🎬', label: "Avancer une vidéo / contenu" },
+    { offset: 690, icon:'🖤', label: "Session ICON ARCHIVES (créa, fournisseurs)" },
+    { offset: 870, icon:'🌙', label: "Fin de journée — détente" },
+    { offset: 990, icon:'💤', label: "Coucher estimé" },
+  ];
+
+  function renderPlanning(){
+    const tl = document.getElementById('timeline');
+    const anchorLine = document.getElementById('anchorLine');
+    tl.innerHTML = '';
+    anchorLine.textContent = `généré à l'ouverture (${fmtTime(openedAt)}) — voilà comment caler le reste de ta journée`;
+    planBlocks.forEach(b => {
+      const t = addMin(openedAt, b.offset);
+      const item = document.createElement('div');
+      item.className = 'tl-item';
+      item.innerHTML = `<div class="tl-time">${fmtTime(t)}</div><div class="tl-label">${b.icon} ${b.label}</div>`;
+      tl.appendChild(item);
+    });
+  }
+
+  // ---------- render tasks ----------
+  function render(){
+    const mount = document.getElementById('section-today');
+    mount.innerHTML = '';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'section-title';
+    titleEl.innerHTML = '<span class="dot"></span> Objectifs du jour';
+    mount.appendChild(titleEl);
+
+    const list = document.createElement('ul');
+    list.className = 'tasklist';
+    let total = 0, done = 0;
+
+    if(day.tasks.length === 0){
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = "rien pour l'instant — balance un objectif ci-dessous 👇";
+      list.appendChild(empty);
+    }
+
+    day.tasks.forEach(task => {
+      total++;
+      if(task.done) done++;
+
+      const li = document.createElement('li');
+      li.className = 'task' + (task.done ? ' done' : '');
+      if(task._fresh){ li.classList.add('fresh'); delete task._fresh; }
+
+      const check = document.createElement('div');
+      check.className = 'check' + (task.done ? ' checked' : '');
+      check.onclick = () => {
+        if(task.done){
+          task.done = false;
+          task.proof = null;
+          afterChange();
+        } else {
+          openVerify(task);
+        }
+      };
+
+      const labelWrap = document.createElement('div');
+      labelWrap.style.flex = '1';
+      const label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = task.text;
+      labelWrap.appendChild(label);
+      if(task.done){
+        const proofTag = document.createElement('div');
+        proofTag.className = 'proof-tag';
+        proofTag.textContent = '✓ confirmé par l’agent de vérif';
+        labelWrap.appendChild(proofTag);
+      }
+
+      const del = document.createElement('button');
+      del.className = 'del';
+      del.textContent = '✕';
+      del.title = 'supprimer pour aujourd\'hui';
+      del.onclick = (e) => {
+        e.stopPropagation();
+        day.tasks = day.tasks.filter(t => t.id !== task.id);
+        afterChange();
+      };
+
+      li.appendChild(check);
+      li.appendChild(labelWrap);
+      li.appendChild(del);
+      list.appendChild(li);
+    });
+
+    mount.appendChild(list);
+
+    const addRow = document.createElement('div');
+    addRow.className = 'add-row';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'ajouter un objectif du jour…';
+    const btn = document.createElement('button');
+    btn.textContent = '+';
+
+    const recurringWrap = document.createElement('label');
+    recurringWrap.className = 'recurring-toggle';
+    const recurringCheckbox = document.createElement('input');
+    recurringCheckbox.type = 'checkbox';
+    recurringWrap.appendChild(recurringCheckbox);
+    recurringWrap.appendChild(document.createTextNode('en faire une tâche récurrente (revient chaque jour)'));
+
+    function addTask(){
+      const val = input.value.trim();
+      if(!val) return;
+      const isRecurring = recurringCheckbox.checked;
+      day.tasks.push({ id: uid(), text: val, done:false, recurring:isRecurring, proof:null, _fresh:true });
+      if(isRecurring) data.template.push({ text: val });
+      input.value = '';
+      recurringCheckbox.checked = false;
+      afterChange();
+    }
+    btn.onclick = addTask;
+    input.onkeydown = (e) => { if(e.key === 'Enter') addTask(); };
+    addRow.appendChild(input);
+    addRow.appendChild(btn);
+    mount.appendChild(addRow);
+    mount.appendChild(recurringWrap);
+
+    // progress
+    const pct = total === 0 ? 0 : Math.round((done/total)*100);
+    document.getElementById('progressBig').textContent = `${done} / ${total} fait aujourd'hui`;
+    document.getElementById('progressSmall').textContent =
+      pct === 100 ? "journée clean. presence over noise. 🖤" :
+      pct >= 70 ? "presque, garde le rythme 🔥" :
+      pct >= 30 ? "en cours, continue comme ça" :
+      "let's get it 💪";
+    document.getElementById('ringLabel').textContent = pct + '%';
+    const circumference = 188.5;
+    document.getElementById('ringFg').style.strokeDashoffset = circumference - (pct/100)*circumference;
+
+    if(pct === 100 && total > 0 && !day.completedAt100){
+      day.completedAt100 = true;
+      data.streak++;
+      burstConfetti();
+    }
+    if(pct < 100 && day.completedAt100){
+      day.completedAt100 = false;
+      data.streak = Math.max(0, data.streak - 1);
+    }
+    document.getElementById('streakNum').textContent = data.streak;
+
+    renderPlanning();
+  }
+
+  function afterChange(){ save(data); render(); }
+
+  render();
+})();
+</script>
+</body>
+</html>
