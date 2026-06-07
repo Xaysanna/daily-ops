@@ -283,6 +283,23 @@
     border-top: 1px solid var(--line);
     padding-top: 14px;
   }
+  .btn-start{
+    width: 100%;
+    padding: 11px 14px;
+    margin-bottom: 14px;
+    border: none; border-radius: 10px;
+    background: linear-gradient(135deg, var(--p1), var(--p2));
+    color: #1b1710;
+    font-size: 13px; font-weight: 600;
+    letter-spacing: .3px;
+    cursor: pointer;
+    transition: filter .15s ease, transform .1s ease;
+  }
+  .btn-start:hover{ filter: brightness(1.08); }
+  .btn-start:active{ transform: scale(.98); }
+  .btn-start[disabled]{
+    background: var(--line); color: var(--muted); cursor: default; filter:none;
+  }
 
   /* MODAL */
   .modal-bg{
@@ -412,7 +429,8 @@
 
     <aside class="side">
       <h3>Planning du jour</h3>
-      <div class="anchor" id="anchorLine">en attente de ton premier check…</div>
+      <button class="btn-start" id="btnStartDay">▶ je commence ma journée</button>
+      <div class="anchor" id="anchorLine">en attente — appuie sur "je commence ma journée" pour générer ton planning (ça se synchronise sur tous tes appareils)</div>
       <div class="timeline" id="timeline"></div>
       <div class="hint">généré direct dès que t'ouvres la page — ça se cale sur l'heure à laquelle tu lances ta journée.</div>
     </aside>
@@ -445,6 +463,29 @@
   const tk = todayKey();
 
   function uid(){ return Math.random().toString(36).slice(2,10); }
+  function shiftDateKey(key, days){
+    const [y,m,d] = key.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m-1, d));
+    dt.setUTCDate(dt.getUTCDate() + days);
+    return dt.getUTCFullYear()+'-'+String(dt.getUTCMonth()+1).padStart(2,'0')+'-'+String(dt.getUTCDate()).padStart(2,'0');
+  }
+
+  // ---------- carry-over: push unfinished overdue tasks to tomorrow / day-after ----------
+  async function carryOverOverdueTasks(){
+    const { data: overdue } = await sb.from('sous_objectifs')
+      .select('id,date_prevue')
+      .lt('date_prevue', tk)
+      .not('date_prevue', 'is', null)
+      .eq('statut', 'a_faire');
+    if(!overdue || !overdue.length) return;
+    const tomorrow = shiftDateKey(tk, 1);
+    const afterTomorrow = shiftDateKey(tk, 2);
+    const CAP_PER_DAY = 3; // pas plus de 3 trucs reportés par jour, pour pas surcharger
+    for(let i=0;i<overdue.length;i++){
+      const newDate = i < CAP_PER_DAY ? tomorrow : afterTomorrow;
+      await sb.from('sous_objectifs').update({ date_prevue: newDate }).eq('id', overdue[i].id);
+    }
+  }
 
   // local mirror of the shared Supabase state (synced across devices)
   let tasks = [];        // sous_objectifs — today
@@ -508,14 +549,30 @@
     burstConfetti();
   };
 
-  // ---------- planning generation (anchored on the moment you open the app) ----------
-  const openedAt = Date.now();
+  // ---------- planning generation (anchored on the moment YOU say "je commence ma journée") ----------
+  // openedAt is no longer auto-set on page load — it's set when you press the button,
+  // and synced through journal_quotidien.data.dayStartedAt so any device shows the same anchor.
+  let openedAt = null;
+  let dayStartedSynced = false;
 
   function fmtTime(ts){
     const d = new Date(ts);
     return d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
   }
   function addMin(ts, mins){ return ts + mins*60000; }
+
+  async function startMyDay(){
+    const btn = document.getElementById('btnStartDay');
+    if(btn) btn.disabled = true;
+    openedAt = Date.now();
+    renderPlanning();
+    await sb.from('journal_quotidien').upsert({
+      date: tk, streak,
+      data: { completedAt100, dayStartedAt: openedAt },
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'date' });
+    if(btn){ btn.textContent = '✓ journée lancée'; }
+  }
 
   // offsets in minutes from "maintenant" (heure d'ouverture du site) — gym & vidéos quasi quotidiens, comme demandé
   const planBlocks = [
@@ -533,8 +590,15 @@
   function renderPlanning(){
     const tl = document.getElementById('timeline');
     const anchorLine = document.getElementById('anchorLine');
+    const btn = document.getElementById('btnStartDay');
     tl.innerHTML = '';
-    anchorLine.textContent = `généré à l'ouverture (${fmtTime(openedAt)}) — voilà comment caler le reste de ta journée`;
+    if(!openedAt){
+      anchorLine.textContent = 'en attente — appuie sur "je commence ma journée" pour générer ton planning (ça se synchronise sur tous tes appareils)';
+      if(btn){ btn.disabled = false; btn.textContent = '▶ je commence ma journée'; }
+      return;
+    }
+    if(btn){ btn.disabled = true; btn.textContent = '✓ journée lancée'; }
+    anchorLine.textContent = `lancée à ${fmtTime(openedAt)} — voilà comment caler le reste de ta journée`;
     planBlocks.forEach(b => {
       const t = addMin(openedAt, b.offset);
       const item = document.createElement('div');
@@ -586,7 +650,9 @@
     if(changed){
       document.getElementById('streakNum').textContent = streak;
       await sb.from('journal_quotidien').upsert({
-        date: tk, streak, data: { completedAt100 }, updated_at: new Date().toISOString()
+        date: tk, streak,
+        data: { completedAt100, dayStartedAt: openedAt },
+        updated_at: new Date().toISOString()
       }, { onConflict: 'date' });
     }
   }
@@ -823,6 +889,11 @@
   // ---------- initial load from Supabase + recurring-task seeding ----------
   async function init(){
     try{
+      document.getElementById('btnStartDay').onclick = startMyDay;
+
+      // pousse au lendemain / sur-lendemain ce qui traîne depuis avant aujourd'hui et qui n'est pas fait
+      await carryOverOverdueTasks();
+
       let { data: rows } = await sb.from('sous_objectifs').select('*').eq('date_prevue', tk).order('created_at', { ascending: true });
       tasks = rows || [];
 
@@ -848,6 +919,11 @@
       const todayRow = (jrows || []).find(r => r.date === tk);
       streak = todayRow ? todayRow.streak : ((jrows && jrows[0]) ? jrows[0].streak : 0);
       completedAt100 = !!(todayRow && todayRow.data && todayRow.data.completedAt100);
+
+      // si la journée a déjà été lancée depuis un autre appareil, on récupère le même ancrage
+      if(todayRow && todayRow.data && todayRow.data.dayStartedAt){
+        openedAt = todayRow.data.dayStartedAt;
+      }
 
       render();
       await checkStreak();
