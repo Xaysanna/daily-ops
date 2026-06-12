@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "mcpmarket-my-toolkit": {
+      "url": "https://link.mcpmarket.com/lucas-savangsy/toolkits/my-toolkit/mcp",
+      "headers": {
+        "Authorization": "Bearer sk_user_REPLACE_WITH_YOUR_TOKEN"
+      }
+    }
+  }
+}

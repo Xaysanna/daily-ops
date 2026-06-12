@@ -1,0 +1,5 @@
+# MCPmarket plugin: real credentials and sync artifacts (never commit)
+mcpmarket-my-toolkit/.mcp.json
+mcpmarket-my-toolkit/.last-sync
+mcpmarket-my-toolkit/skills/*
+!mcpmarket-my-toolkit/skills/.gitkeep

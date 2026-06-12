@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "mcpmarket-my-toolkit": {
+      "source": {
+        "source": "local",
+        "path": "./mcpmarket-my-toolkit"
+      }
+    }
+  },
+  "enabledPlugins": [
+    "mcpmarket-my-toolkit@mcpmarket-my-toolkit"
+  ]
+}
